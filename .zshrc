@@ -2,7 +2,7 @@
 source ~/.path
 
 # Path to your oh-my-zsh installation.
-export ZSH="/Users/kyle/.oh-my-zsh"
+export ZSH="/Users/kylepenfound/.oh-my-zsh"
 
 # Set name of the theme to load --- if set to "random", it will
 # load a random theme each time oh-my-zsh is loaded, in which case,
@@ -98,3 +98,27 @@ export EDITOR='vim'
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 source ~/.credential_envs
+export NVM_DIR="$HOME/.nvm"
+  [ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
+  [ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
+
+source ~/.bash_profile
+export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
+export LDFLAGS="-L/opt/homebrew/opt/ruby/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/ruby/include"
+export PKG_CONFIG_PATH="/opt/homebrew/opt/ruby/lib/pkgconfig"
+export PATH="$(gem environment gemdir)/bin:$PATH"
+export DO_NOT_TRACK=1
+export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
+
+alias syncfork="git fetch upstream main && git merge upstream/main && git push origin main"
+
+export DOCKER_HOST=tcp://wompbox.turkey-beta.ts.net:2375
+export GEMINI_API_KEY="op://Employee/GEMINI_API_KEY/credential"
+export OPENAI_BASE_URL="op://Employee/OLLAMA_HOST/hostname"
+export OPENAI_MODEL="op://Employee/OLLAMA_HOST/model"
+export ANTHROPIC_API_KEY="op://Employee/ANTHROPIC/credential"
+
+eval "$(direnv hook zsh)"
+export PATH="/Users/kylepenfound/.config/herd-lite/bin:$PATH"
+export PHP_INI_SCAN_DIR="/Users/kylepenfound/.config/herd-lite/bin:$PHP_INI_SCAN_DIR"
