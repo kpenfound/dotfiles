@@ -1,5 +1,4 @@
 # If you come from bash you might have to change your $PATH.
-source ~/.path
 
 # Path to your oh-my-zsh installation.
 export ZSH="/Users/kylepenfound/.oh-my-zsh"
@@ -97,28 +96,136 @@ export EDITOR='vim'
 # Example aliases
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
-source ~/.credential_envs
-export NVM_DIR="$HOME/.nvm"
-  [ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
-  [ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && \. "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"  # This loads nvm bash_completion
-
-source ~/.bash_profile
-export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
-export LDFLAGS="-L/opt/homebrew/opt/ruby/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/ruby/include"
-export PKG_CONFIG_PATH="/opt/homebrew/opt/ruby/lib/pkgconfig"
-export PATH="$(gem environment gemdir)/bin:$PATH"
-export DO_NOT_TRACK=1
-export PATH="/opt/homebrew/opt/libpq/bin:$PATH"
 
 alias syncfork="git fetch upstream main && git merge upstream/main && git push origin main"
 
-export DOCKER_HOST=tcp://wompbox.turkey-beta.ts.net:2375
-export GEMINI_API_KEY="op://Employee/GEMINI_API_KEY/credential"
-export OPENAI_BASE_URL="op://Employee/OLLAMA_HOST/hostname"
-export OPENAI_MODEL="op://Employee/OLLAMA_HOST/model"
-export ANTHROPIC_API_KEY="op://Employee/ANTHROPIC/credential"
+export PATH=/usr/local/go/bin:$PATH
 
-eval "$(direnv hook zsh)"
-export PATH="/Users/kylepenfound/.config/herd-lite/bin:$PATH"
-export PHP_INI_SCAN_DIR="/Users/kylepenfound/.config/herd-lite/bin:$PHP_INI_SCAN_DIR"
+eval "$(/opt/homebrew/bin/brew shellenv)"
+
+# FUNCTIONS
+
+# Function to build and run a Dagger development engine container from a GitHub PR
+# Usage: run_dagger_pr <PR_NUMBER>
+# Example: run_dagger_pr 5012
+
+dagger_pr() {
+  # --- Input Validation ---
+  if [[ -z "$1" ]]; then
+    echo "Usage: run_dagger_pr <PR_NUMBER>" >&2
+    echo "Error: Pull Request number is required." >&2
+    return 1
+  fi
+
+  local PR_NUMBER="$1"
+  # Optional: Validate if it's a number
+  if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+    echo "Error: PR_NUMBER '$PR_NUMBER' must be a positive integer." >&2
+    return 1
+  fi
+
+  # --- Configuration ---
+  local CONTAINER_NAME="dagger-dev"
+  local BIN_DIR="/Users/kylepenfound/bin"
+  local BIN_PATH="$BIN_DIR/dagger"
+  local EXPORT_DIR="/Users/kylepenfound/builds"
+  local EXPORT_PATH="$EXPORT_DIR/engine.tar"
+  local DAGGER_MODULE="github.com/dagger/dagger@pull/$PR_NUMBER/head"
+  local DOCKER_VOLUME="/var/lib/dagger" # Standard volume used by Dagger engine
+
+  echo "--- Starting Dagger PR build for PR #$PR_NUMBER ---"
+
+  # Ensure the export directory exists
+  mkdir -p "$EXPORT_DIR" || { echo "Error: Failed to create directory $EXPORT_DIR" >&2; return 1; }
+  mkdir -p "$BIN_DIR" || { echo "Error: Failed to create directory $BIN_DIR" >&2; return 1; }
+
+  # --- Step 1: Remove existing container (ignore errors if not found) ---
+  echo "1. Removing existing container '$CONTAINER_NAME' (if any)..."
+  docker rm -fv "$CONTAINER_NAME" > /dev/null 2>&1 || true
+
+  # --- Step 2: Build and Export Dagger Engine ---
+  echo "2. Building engine from Dagger module '$DAGGER_MODULE'..."
+  if ! dagger -m "$DAGGER_MODULE" call engine container export --path "$EXPORT_PATH"; then
+    echo "Error: Dagger build failed for PR $PR_NUMBER." >&2
+    # Optional cleanup of potentially partial tar file
+    rm -f "$EXPORT_PATH"
+    return 1
+  fi
+  echo "   Engine exported successfully to $EXPORT_PATH"
+
+  # --- Step 3: Load Image and Extract SHA ---
+  echo "3. Loading image from $EXPORT_PATH..."
+  local load_output
+  # Capture stdout from docker load
+  if ! load_output=$(docker load -i "$EXPORT_PATH"); then
+    echo "Error: Failed to load image from $EXPORT_PATH" >&2
+    rm -f "$EXPORT_PATH" # Clean up tar file on failure
+    return 1
+  fi
+
+  # Extract the SHA - looking for the line "Loaded image ID: sha256:..."
+  # Using sed to extract the SHA part after 'sha256:'
+  local SHA=$(echo "$load_output" | sed -n 's/^Loaded image ID: sha256:\([0-9a-f]\{64\}\).*/\1/p')
+
+  # Validate SHA extraction
+  if [[ -z "$SHA" ]]; then
+    echo "Error: Could not extract image SHA from docker load output:" >&2
+    echo "$load_output" >&2
+    rm -f "$EXPORT_PATH" # Clean up tar file
+    return 1
+  fi
+  echo "   Successfully loaded image ID: sha256:$SHA"
+
+  # Clean up the exported tar file now that it's loaded
+  echo "   Cleaning up temporary file $EXPORT_PATH..."
+  rm -f "$EXPORT_PATH"
+
+  # --- Step 4: Run the Container ---
+  echo "4. Running container '$CONTAINER_NAME' using image sha256:$SHA..."
+  if ! docker run --rm --privileged -d -v "$DOCKER_VOLUME" --name "$CONTAINER_NAME" "$SHA"; then
+    echo "Error: Failed to run container '$CONTAINER_NAME' with image $SHA." >&2
+    # Note: The image is still loaded in Docker. Manual cleanup might be needed.
+    return 1
+  fi
+
+  # --- Step 5: Build the CLI ---
+  echo "5. Building CLI..."
+  if ! dagger -m "$DAGGER_MODULE" call cli binary --platform darwin/arm64 export --path "$BIN_PATH"; then
+    echo "Error: Dagger CLI build failed for PR $PR_NUMBER." >&2
+    # Optional cleanup of potentially partial tar file
+    rm -f "$BIN_PATH"
+    return 1
+  fi
+
+  echo "--- Successfully started container '$CONTAINER_NAME' for PR #$PR_NUMBER ---"
+  echo "You can view its logs with: docker logs -f $CONTAINER_NAME"
+  echo "Connect to this engine with _EXPERIMENTAL_DAGGER_RUNNER_HOST=docker-container://dagger-dev ~/bin/dagger"
+
+  return 0 # Indicate success
+}
+
+# Set different OpenAI compatible endpoint configurations
+use_openai() {
+  export OPENAI_MODEL="op://Employee/OPENAI_DAGGER/model"
+  export OPENAI_API_KEY="op://Employee/OPENAI_DAGGER/apikey"
+  unset OPENAI_BASE_URL
+  unset OPENAI_DISABLE_STREAMING
+}
+
+use_ollama() {
+  export OPENAI_BASE_URL="op://Employee/OLLAMA_HOST/hostname"
+  export OPENAI_MODEL="op://Employee/OLLAMA_HOST/model"
+  unset OPENAI_DISABLE_STREAMING
+  unset OPENAI_API_KEY
+}
+
+use_docker() {
+  export OPENAI_BASE_URL="http://model-runner.docker.internal/engines/v1/"
+  export OPENAI_MODEL="ai/qwen2.5"
+  unset OPENAI_API_KEY
+}
+
+
+export GEMINI_API_KEY="op://Employee/GEMINI_API_KEY/credential"
+export ANTHROPIC_API_KEY="op://Employee/Dagger Anthropic/credential"
+
